@@ -79,6 +79,7 @@ body[data-a="1"] .wk.open .wkn{color:var(--moss)}
 .day{border-left:3px solid var(--line);margin:0 0 8px;background:var(--ink2);border-radius:0 12px 12px 0}
 .day[data-t="Run"]{border-left-color:var(--amber)}
 .day[data-t="Strength"]{border-left-color:var(--rust)}
+.day[data-t="StrengthB"]{border-left-color:var(--rust)}
 .day[data-t="Partner"]{border-left-color:var(--moss)}
 .day[data-t="Simulation"]{border-left-color:var(--bone)}
 .dh{display:flex;align-items:center;gap:12px;width:100%;padding:13px 14px;text-align:left}
@@ -507,6 +508,15 @@ var carrySet=[
  ["Thruster 3 × 10 race weight · Farmer's carry 3 × 60 m race weight","Farmer's carry 3 × 50 m race weight"],
  ["Thruster 2 × 8 light · Farmer's carry 2 × 40 m light","Farmer's carry 2 × 40 m light"]
 ];
+/* Harvey's second gym day. Fixed prescription — same every week, unlike the
+   periodised Day 2 sets above. Solo: this day never appears for Doireann. */
+var STRB={
+ anchor:"Deadlift 3 × 5 moderate",
+ push:"Overhead press 3 × 8 · Dips 3 × 8–10 · Single-arm DB row 3 × 10 each · Face pull 3 × 15",
+ carry:"Walking lunges 3 × 20 · Sled push 4 × 20 m · Pallof press 3 × 12 each side"
+};
+var STRB_MOVES=["Deadlift","Overhead press","Dips","Single-arm DB row","Face pull","Walking lunges","Sled push","Pallof press"];
+
 var partSet=[
  "3 rounds together — run 500 m side by side, then split 200 m SkiErg and 20 walking lunges. Talk through every handover.",
  "4 rounds together — 500 m run · split 250 m SkiErg and 20 lunges. Try one swap per station and feel how it goes.",
@@ -598,21 +608,30 @@ for(var w=0;w<12;w++){
   var isSim=(w===3||w===5||w===8||w===10);
   PLAN.push({
     n:w+1, phase:weekMeta[w][0], focus:weekMeta[w][1], why:whySet[w],
+    /* `d` is the stable storage index used for tick + log keys. It is deliberately
+       NOT the array position, so days can be reordered or inserted without
+       re-pointing progress already saved (locally or in Supabase). */
     days:[
-      {name:"Intervals",type:"Run",sub:"Day 1 · solo",fuel:FUEL.Run,blocks:[
+      {d:0,name:"Intervals",type:"Run",sub:"Day 1 · solo",fuel:FUEL.Run,blocks:[
         {h:"Warm up",lines:["10 min easy jog, leg swings, 3 × 20 s strides"]},
         {h:"Main set",lines:[runSet[w]]},
         {h:"Cool down",lines:["10 min easy jog or walk"]}]},
-      {name:"Strength",type:"Strength",sub:"Day 2 · gym, solo",fuel:FUEL.Strength,blocks:[
-        {h:["Lower anchor","Lower body"],lines:[strSet[w]]},
-        {h:["Push & pull","Race movements"],lines:[accSet[w]]},
-        {h:["Race prep & carry","Grip and trunk"],lines:[carrySet[w]]}]},
-      {name:(w===3?"Benchmark sim":w===5?"Mini simulation":w===8?"Half simulation":w===10?"Full simulation":"Partner session"),
+      /* Harvey's Day 2 is frozen at the week-one prescription so his two gym days
+         are the same every week. Doireann's side still periodises as before. */
+      {d:1,name:["Strength A","Strength"],type:"Strength",sub:"Day 2 · gym, solo",fuel:FUEL.Strength,blocks:[
+        {h:["Lower anchor","Lower body"],lines:[[strSet[0][0],strSet[w][1]]]},
+        {h:["Push & pull","Race movements"],lines:[[accSet[0][0],accSet[w][1]]]},
+        {h:["Race prep & carry","Grip and trunk"],lines:[[carrySet[0][0],carrySet[w][1]]]}]},
+      {d:2,name:(w===3?"Benchmark sim":w===5?"Mini simulation":w===8?"Half simulation":w===10?"Full simulation":"Partner session"),
        type:(isSim?"Simulation":"Partner"),sub:"Day 3 · as a team",together:true,fuel:(isSim?FUEL.Simulation:FUEL.Partner),blocks:[
         {h:"Warm up",lines:["8 min easy together, then one round at half effort"]},
         {h:"Main set",lines:[partSet[w]]},
         {h:"Afterwards",lines:["Two minutes on what to change. Write it in the notes below."]}]},
-      {name:"Long and easy",type:"Run",sub:"Day 4 · aerobic",together:true,fuel:FUEL.LongEasy,blocks:[
+      {d:4,only:0,name:"Strength B",type:"StrengthB",sub:"Day 4 · gym, solo",fuel:FUEL.Strength,blocks:[
+        {h:"Lower anchor",lines:[STRB.anchor]},
+        {h:"Push & pull",lines:[STRB.push]},
+        {h:"Race prep & carry",lines:[STRB.carry]}]},
+      {d:3,name:"Long and easy",type:"Run",sub:["Day 5 · aerobic","Day 4 · aerobic"],together:true,fuel:FUEL.LongEasy,blocks:[
         {h:"Session",lines:[longSet[w]]},
         {h:"Finish with",lines:["10 min mobility — hips, ankles, thoracic spine"]}]}
     ]
@@ -831,14 +850,22 @@ function setSync(mode){
 
 /* ══════════════ RENDER ══════════════ */
 function pick(v){return Array.isArray(v)?v[cur]:v}
-function countDone(a){var n=0,k;for(k in ST.done[a]) if(ST.done[a][k]) n++;return n}
+/* a day with `only` set belongs to that athlete alone (Harvey's Strength B) */
+function dayFor(D,a){ return D.only==null || D.only===a; }
+function daysFor(W,a){ return W.days.filter(function(D){return dayFor(D,a)}); }
+function totalDays(a){ var n=0; PLAN.forEach(function(W){ n+=daysFor(W,a).length }); return n; }
+function countDone(a){
+  var n=0;
+  PLAN.forEach(function(W,wi){ daysFor(W,a).forEach(function(D){ if(ST.done[a][key(wi,D.d)]) n++ }) });
+  return n;
+}
 
 function renderLanes(){
   var role=["Takes the load","Sets the pace"];
   var h="";
   for(var i=0;i<2;i++){
     h+='<button class="lane'+(i===cur?" on":"")+'" data-i="'+i+'" onclick="setA('+i+')">'+
-       '<span class="pct">'+countDone(i)+'/48</span>'+
+       '<span class="pct">'+countDone(i)+'/'+totalDays(i)+'</span>'+
        '<span class="nm">'+esc(ST.names[i])+'</span>'+
        '<span class="dv">'+role[i]+'</span></button>';
   }
@@ -846,14 +873,15 @@ function renderLanes(){
 }
 function renderProg(){
   var h="";
-  for(var w=0;w<12;w++){var full=true;for(var d=0;d<4;d++) if(!ST.done[cur][key(w,d)]) full=false;h+='<i class="'+(full?"d":"")+'"></i>'}
+  for(var w=0;w<12;w++){var full=daysFor(PLAN[w],cur).every(function(D){return !!ST.done[cur][key(w,D.d)]});h+='<i class="'+(full?"d":"")+'"></i>'}
   document.getElementById("prog").innerHTML=h;
 }
 /* ══════════════ SESSION LOGS ══════════════ */
-function logKey(w,d){ return PLAN[w].days[d].together ? ("t-"+w+"-"+d) : (cur+"-"+w+"-"+d); }
+function logKey(w,d){ var D=PLAN[w].days[d]; return D.together ? ("t-"+w+"-"+D.d) : (cur+"-"+w+"-"+D.d); }
 
 function parseMovements(w){
-  var parts=[strSet[w][cur],accSet[w][cur],carrySet[w][cur]].join(" · ").split("·");
+  var sw=(cur===0?0:w);   // Harvey's Day 2 is frozen at week one, so seed from it
+  var parts=[strSet[sw][cur],accSet[sw][cur],carrySet[sw][cur]].join(" · ").split("·");
   var rows=[];
   parts.forEach(function(p){
     var nm=p.replace(/\s*\d.*$/,"").trim();   // strip the "3 × 8" etc.
@@ -867,6 +895,7 @@ function parseReps(str){
 }
 function logSchemaFor(type,w){
   if(type==="Strength") return {cols:["Movement","Set 1","Set 2","Set 3","Set 4"],seed:parseMovements(w)};
+  if(type==="StrengthB") return {cols:["Movement","Set 1","Set 2","Set 3","Set 4"],seed:STRB_MOVES.map(function(m){return [m,"","","",""]})};
   if(type==="Run")      return {cols:["Interval","Result"],seed:parseReps(runSet[w][cur])};
   if(type==="Simulation"||type==="Partner") return {cols:["Station","Split","Who"],seed:STATIONS.map(function(s){return [s[0],"",""]})};
   return {cols:["Metric","Value"],seed:[["Distance",""],["Time",""],["Felt (1–10)",""]]};
@@ -887,7 +916,7 @@ function logInner(key,type,w){
       var v=esc(row[ci]!=null?row[ci]:"");
       var cls=(ci===0?' class="mv"':'');
       h+='<td'+cls+'><input'+dis+' value="'+v+'" oninput="logCell(\''+key+'\','+r+','+ci+',this.value)" placeholder="'+
-         (ci===0?'':(type==='Strength'?'60×8':''))+'"></td>';
+         (ci===0?'':(type.indexOf('Strength')===0?'60×8':''))+'"></td>';
     });
     h+='<td class="x">'+(ed?'<button onclick="logDelRow(\''+key+'\',\''+type+'\','+w+','+r+')" aria-label="Remove">×</button>':'')+'</td></tr>';
   });
@@ -895,7 +924,7 @@ function logInner(key,type,w){
   h+='<div class="rpe"><label>Session RPE</label><input'+dis+' value="'+esc(L.rpe||"")+'" placeholder="1–10" oninput="logRpe(\''+key+'\',this.value)"></div>';
   if(ed){
     h+='<div class="logbtns"><button class="lbtn" onclick="logAddRow(\''+key+'\',\''+type+'\','+w+')">+ Add row</button>';
-    if(type==="Strength") h+='<button class="lbtn feed" onclick="logFeedPR(\''+key+'\')">↑ Send bests to PR board</button>';
+    if(type.indexOf("Strength")===0) h+='<button class="lbtn feed" onclick="logFeedPR(\''+key+'\')">↑ Send bests to PR board</button>';
     if(type==="Simulation") h+='<button class="lbtn feed" onclick="openM(\'sim\')">Open sim timer</button>';
     h+='</div>';
   }
@@ -948,18 +977,20 @@ function renderWeeks(){
   document.querySelectorAll(".day.open").forEach(function(e){openD.push(e.dataset.k)});
   var h="";
   PLAN.forEach(function(W,wi){
-    var done=0; for(var d=0;d<4;d++) if(ST.done[cur][key(wi,d)]) done++;
+    var mine=daysFor(W,cur), tot=mine.length;
+    var done=0; mine.forEach(function(D){ if(ST.done[cur][key(wi,D.d)]) done++ });
     h+='<div class="wk" data-w="'+wi+'"><button class="wkh" onclick="tw('+wi+')">'+
        '<span class="wkn">'+(W.n<10?"0":"")+W.n+'</span>'+
        '<span class="wkt"><b>'+W.phase+'</b><span>'+W.focus+'</span></span>'+
-       '<span class="wkc">'+done+'/4</span></button>'+
+       '<span class="wkc">'+done+'/'+tot+'</span></button>'+
        '<div class="wkbody"><p class="why">'+pick(W.why)+'</p>';
     W.days.forEach(function(D,di){
-      var k=key(wi,di), isDone=!!ST.done[cur][k];
+      if(!dayFor(D,cur)) return;
+      var k=key(wi,D.d), isDone=!!ST.done[cur][k];
       h+='<div class="day'+(isDone?" done":"")+'" data-t="'+D.type+'" data-k="'+k+'">'+
          '<div class="dh"><button class="tick" onclick="tk('+wi+','+di+')" aria-label="Mark complete">✓</button>'+
-         '<button class="dt" onclick="td(this)"><b>'+D.name+(D.together?'<span class="both">Together</span>':'')+
-         '</b><span>'+D.sub+'</span></button></div><div class="dbody">';
+         '<button class="dt" onclick="td(this)"><b>'+pick(D.name)+(D.together?'<span class="both">Together</span>':'')+
+         '</b><span>'+pick(D.sub)+'</span></button></div><div class="dbody">';
       D.blocks.forEach(function(B){
         h+='<div class="blk"><h4>'+pick(B.h)+'</h4><ul>';
         B.lines.forEach(function(L){ h+='<li>'+pick(L)+'</li>' });
@@ -1013,7 +1044,8 @@ function renderNut(){
    ["Day 2 · Strength",FUEL.Strength],
    ["Day 3 · Partner session",FUEL.Partner],
    ["Day 3 · Simulation weeks",FUEL.Simulation],
-   ["Day 4 · Long &amp; easy",FUEL.LongEasy],
+   ["Day 4 · Strength B (Harvey only)",FUEL.Strength],
+   ["Long &amp; easy",FUEL.LongEasy],
    ["Rest days","Protein stays high — it's what recovers you. Carbs can ease back a little, veg and water stay up, and sleep does more than any supplement."]
   ];
   var h="";
@@ -1105,15 +1137,15 @@ function tw(i){document.querySelector('.wk[data-w="'+i+'"]').classList.toggle("o
 function td(el){el.closest(".day").classList.toggle("open")}
 function setA(i){cur=i;render()}
 function tk(w,d){
-  var tog=PLAN[w].days[d].together;
+  var D=PLAN[w].days[d], tog=D.together;
   if(!canEdit(tog)){ toast("You're viewing "+esc(ST.names[cur])+" — sign in as them to edit"); return; }
-  var k=key(w,d),val=!ST.done[cur][k];
+  var k=key(w,D.d),val=!ST.done[cur][k];
   if(tog){ST.done[0][k]=val;ST.done[1][k]=val}else{ST.done[cur][k]=val}
   save();
   var el=document.querySelector('.day[data-k="'+k+'"]');if(el)el.classList.toggle("done",val);
   renderLanes();renderProg();
   var wk=document.querySelector('.wk[data-w="'+w+'"] .wkc');
-  if(wk){var n=0;for(var i=0;i<4;i++) if(ST.done[cur][key(w,i)]) n++;wk.textContent=n+"/4"}
+  if(wk){var mine=daysFor(PLAN[w],cur),n=0;mine.forEach(function(X){if(ST.done[cur][key(w,X.d)])n++});wk.textContent=n+"/"+mine.length}
 }
 function exToggle(w,v){ if(!ST.extras[w]) ST.extras[w]={}; ST.extras[w].done=v; save(); }
 function exNote(w,v){ if(!ST.extras[w]) ST.extras[w]={}; ST.extras[w].note=v; save(); }
